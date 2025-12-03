@@ -2,21 +2,32 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Trash } from "lucide-react";
 
 type Exercise = {
   id: string;
   name: string;
-  target: { sets: number | string ; reps: { min: number | string ; max: number | string } };
+  target: { sets: number; reps: { min: number; max: number } };
+  restSeconds: number;
+  intention: string;
+  note: string;
+};
+
+type ExerciseInput = {
+  id: string;
+  name: string;
+  target: { sets: number | string; reps: { min: number | string; max: number | string } };
   restSeconds: number | string;
   intention: string;
   note: string;
 };
 
 export default function Page() {
+  const router = useRouter();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [exercises, setExercises] = useState<Exercise[]>([
+  const [exercises, setExercises] = useState<ExerciseInput[]>([
     { id: String(Date.now()), name: "", target: { sets: "", reps: { min: "", max: "" } }, restSeconds: "", intention: "", note: "" },
   ]);
   const [errors, setErrors] = useState<{
@@ -24,6 +35,8 @@ export default function Page() {
     description?: string;
     exercises?: Record<string, { summary?: string }>;
   }>({});
+  const [exercisesError, setExercisesError] = useState<string>("");
+  const [inputErrors, setInputErrors] = useState<Record<string, string>>({});
 
   const addExercise = () => {
     setExercises((prev) => [
@@ -32,23 +45,13 @@ export default function Page() {
     ]);
   };
 
-  const updateExercise = (id: string, updater: (ex: Exercise) => Exercise) => {
-    setExercises((prev) => {
-      const next = prev.map((ex) => (ex.id === id ? updater(ex) : ex));
-      // compute per-exercise summaries immediately from the new array
-      const exErrors: Record<string, { summary?: string }> = {};
-      next.forEach((ex) => {
-        const msg = getMissingSummary(ex, 0 as number);
-        if (msg) exErrors[ex.id] = { summary: msg };
-      });
-      setErrors((prevErr) => ({ ...prevErr, exercises: Object.keys(exErrors).length ? exErrors : undefined }));
-      return next;
-    });
+  const updateExercise = (id: string, updater: (ex: ExerciseInput) => ExerciseInput) => {
+    setExercises((prev) => prev.map((ex) => (ex.id === id ? updater(ex) : ex)));
   };
 
 
   // Helper: returns summary message of missing required fields for an exercise, or undefined
-  const getMissingSummary = (ex: Exercise, idx: number) => {
+  const getMissingSummary = (ex: ExerciseInput, idx: number) => {
     const missing: string[] = [];
     if (!ex.name.trim()) missing.push("운동명");
     if (ex.target.sets === "" || Number(ex.target.sets) < 1) missing.push("세트 수");
@@ -82,12 +85,23 @@ export default function Page() {
   };
 
   const validate = () => {
+    // keep for backward compatibility but prefer computeErrors()
+    const computed = computeErrors();
+    setErrors(computed);
+    const hasErrors = Boolean(computed.title || computed.description || (computed.exercises && Object.keys(computed.exercises).length > 0));
+    return { ok: !hasErrors };
+  };
+
+  // Compute errors from current form state but do not set state
+  const computeErrors = (): typeof errors => {
     const newErrors: typeof errors = {};
     const titleMissing = !title.trim();
     const descMissing = !description.trim();
     if (titleMissing) newErrors.title = "프로그램 제목을 입력하세요.";
     if (descMissing) newErrors.description = "전체 가이드를 입력하세요.";
 
+    // Check if at least one exercise exists with all required fields
+    let hasValidExercise = false;
     exercises.forEach((ex, i) => {
       const id = ex.id;
       const idx = i + 1;
@@ -101,27 +115,92 @@ export default function Page() {
         newErrors.exercises = newErrors.exercises || {};
         const msg = getMissingSummary(ex, idx);
         newErrors.exercises[id] = { summary: msg || "운동 이름, 세트 수를 입력해주세요" };
+      } else {
+        hasValidExercise = true;
       }
     });
 
-    setErrors(newErrors);
-    const hasErrors = Boolean(titleMissing || descMissing || (newErrors.exercises && Object.keys(newErrors.exercises).length > 0));
-    return { ok: !hasErrors };
+    // At least one valid exercise is required
+    if (!hasValidExercise) {
+      setExercisesError("적어도 하나의 운동을 추가해야 합니다.");
+      return newErrors;
+    } else {
+      setExercisesError("");
+    }
+
+    return newErrors;
   };
 
   const save = () => {
-    const v = validate();
-    if (!v.ok) {
-      // focus or scroll to first error could be added
+    // Check for input errors first
+    const hasInputErrors = Object.keys(inputErrors).length > 0;
+    if (hasInputErrors) {
+      alert("입력 오류를 먼저 수정해주세요.");
       return;
     }
 
-    const payload = { title, description, exercises };
+    // Recompute errors on every save attempt
+    const computed = computeErrors();
+    setErrors(computed);
+    const hasErrors = Boolean(computed.title || computed.description || (computed.exercises && Object.keys(computed.exercises).length > 0) || exercisesError);
+    if (hasErrors) {
+      alert("필수 입력란을 모두 채워주세요.");
+      return;
+    }
+
+    // Convert exercises to proper types before saving
+    const convertedExercises: Exercise[] = exercises
+      .filter((ex) => {
+        // Only include exercises with all required fields
+        return (
+          ex.name.trim() &&
+          ex.target.sets !== "" &&
+          Number(ex.target.sets) >= 1 &&
+          ex.target.reps.min !== "" &&
+          ex.target.reps.max !== "" &&
+          ex.restSeconds !== ""
+        );
+      })
+      .map((ex) => ({
+        id: ex.id,
+        name: ex.name.trim(),
+        target: {
+          sets: Number(ex.target.sets),
+          reps: {
+            min: Number(ex.target.reps.min),
+            max: Number(ex.target.reps.max),
+          },
+        },
+        restSeconds: Number(ex.restSeconds),
+        intention: ex.intention,
+        note: ex.note,
+      }));
+
+    const payload = { title, description, exercises: convertedExercises };
     console.log("Saved template:", payload);
-    // clear errors on successful save
-    setErrors({});
-    // show payload as popup since there's no DB yet
-    alert("저장되었습니다\n" + JSON.stringify(payload, null, 2));
+    
+    // TODO: DB 저장 로직이 여기에 들어갈 예정
+    
+    // Show success message with saved data (temporary - will be removed when DB is connected)
+    const savedInfo = `프로그램이 성공적으로 저장되었습니다!
+
+저장된 정보:
+제목: ${title}
+가이드: ${description}
+운동 개수: ${convertedExercises.length}개
+
+운동 목록:
+${convertedExercises.map((ex, i) => 
+  `${i + 1}. ${ex.name}
+   - 세트: ${ex.target.sets}세트
+   - 횟수: ${ex.target.reps.min}~${ex.target.reps.max}회
+   - 휴식: ${ex.restSeconds}초
+   ${ex.intention ? `- 의도: ${ex.intention}` : ''}
+   ${ex.note ? `- 비고: ${ex.note}` : ''}`
+).join('\n\n')}`;
+    
+    alert(savedInfo);
+    router.push("/");
   };
 
   return (
@@ -194,77 +273,167 @@ export default function Page() {
 
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">세트 수</label>
                   <input
-                    type="number"
-                    min={1}
-                    max={100}
+                    type="text"
+                    inputMode="numeric"
                     value={ex.target.sets === "" ? "" : String(ex.target.sets)}
                     onChange={(e) => {
-                      const newEx = { ...ex, target: { ...ex.target, sets: e.target.value === "" ? "" : Number(e.target.value) } };
-                      updateExercise(ex.id, () => newEx);
-                    }}
-                    className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="세트 수"
-                  />
-
-                  <div className="flex gap-2 mt-2">
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={ex.target.reps.min === "" ? "" : String(ex.target.reps.min)}
-                      onChange={(e) => {
-                          const newEx = { ...ex, target: { ...ex.target, reps: { ...ex.target.reps, min: e.target.value === "" ? "" : Number(e.target.value) } } };
-                          updateExercise(ex.id, () => newEx);
-                        }}
-                      className="flex-1 p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="횟수(최소)"
-                    />
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={ex.target.reps.max === "" ? "" : String(ex.target.reps.max)}
-                      onChange={(e) => {
-                        const newEx = { ...ex, target: { ...ex.target, reps: { ...ex.target.reps, max: e.target.value === "" ? "" : Number(e.target.value) } } };
+                      const val = e.target.value;
+                      const errorKey = `${ex.id}-sets`;
+                      
+                      if (val === "") {
+                        setInputErrors(prev => { const copy = {...prev}; delete copy[errorKey]; return copy; });
+                        const newEx = { ...ex, target: { ...ex.target, sets: "" } };
                         updateExercise(ex.id, () => newEx);
-                      }}
-                      className="flex-1 p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="횟수(최대)"
-                    />
+                      } else if (/^\d+$/.test(val) && Number(val) >= 1) {
+                        setInputErrors(prev => { const copy = {...prev}; delete copy[errorKey]; return copy; });
+                        const newEx = { ...ex, target: { ...ex.target, sets: Number(val) } };
+                        updateExercise(ex.id, () => newEx);
+                      } else {
+                        setInputErrors(prev => ({ ...prev, [errorKey]: "1 이상의 숫자를 입력해주세요" }));
+                      }
+                    }}
+                    className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 ${
+                      inputErrors[`${ex.id}-sets`] ? 'border-red-500 focus:ring-red-500' : 'focus:ring-blue-500'
+                    }`}
+                    placeholder="예: 3"
+                  />
+                  {inputErrors[`${ex.id}-sets`] && (
+                    <p className="text-sm text-red-600 mt-1">{inputErrors[`${ex.id}-sets`]}</p>
+                  )}
+
+                  <label className="block text-sm font-medium text-slate-700 mb-1 mt-3">목표 횟수</label>
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={ex.target.reps.min === "" ? "" : String(ex.target.reps.min)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const errorKey = `${ex.id}-reps-min`;
+                          
+                          if (val === "") {
+                            setInputErrors(prev => { const copy = {...prev}; delete copy[errorKey]; return copy; });
+                            const newEx = { ...ex, target: { ...ex.target, reps: { ...ex.target.reps, min: "" } } };
+                            updateExercise(ex.id, () => newEx);
+                          } else if (/^\d+$/.test(val) && Number(val) > 0) {
+                            // Always update the value first
+                            const minVal = Number(val);
+                            const newEx = { ...ex, target: { ...ex.target, reps: { ...ex.target.reps, min: minVal } } };
+                            updateExercise(ex.id, () => newEx);
+                            
+                            // Then check validation
+                            const maxVal = ex.target.reps.max;
+                            if (maxVal !== "" && minVal > Number(maxVal)) {
+                              setInputErrors(prev => ({ ...prev, [errorKey]: "최소값은 최대값보다 작거나 같아야 합니다" }));
+                            } else {
+                              setInputErrors(prev => { const copy = {...prev}; delete copy[errorKey]; return copy; });
+                            }
+                          } else {
+                            setInputErrors(prev => ({ ...prev, [errorKey]: "1 이상의 숫자를 입력해주세요" }));
+                          }
+                        }}
+                        className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 ${
+                          inputErrors[`${ex.id}-reps-min`] ? 'border-red-500 focus:ring-red-500' : 'focus:ring-blue-500'
+                        }`}
+                        placeholder="최소 (예: 8)"
+                      />
+                      {inputErrors[`${ex.id}-reps-min`] && (
+                        <p className="text-sm text-red-600 mt-1">{inputErrors[`${ex.id}-reps-min`]}</p>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={ex.target.reps.max === "" ? "" : String(ex.target.reps.max)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const errorKey = `${ex.id}-reps-max`;
+                          
+                          if (val === "") {
+                            setInputErrors(prev => { const copy = {...prev}; delete copy[errorKey]; return copy; });
+                            const newEx = { ...ex, target: { ...ex.target, reps: { ...ex.target.reps, max: "" } } };
+                            updateExercise(ex.id, () => newEx);
+                          } else if (/^\d+$/.test(val) && Number(val) > 0) {
+                            // Always update the value first
+                            const maxVal = Number(val);
+                            const newEx = { ...ex, target: { ...ex.target, reps: { ...ex.target.reps, max: maxVal } } };
+                            updateExercise(ex.id, () => newEx);
+                            
+                            // Then check validation
+                            const minVal = ex.target.reps.min;
+                            if (minVal !== "" && Number(minVal) > maxVal) {
+                              setInputErrors(prev => ({ ...prev, [errorKey]: "최대값은 최소값보다 크거나 같아야 합니다" }));
+                            } else {
+                              setInputErrors(prev => { const copy = {...prev}; delete copy[errorKey]; return copy; });
+                            }
+                          } else {
+                            setInputErrors(prev => ({ ...prev, [errorKey]: "1 이상의 숫자를 입력해주세요" }));
+                          }
+                        }}
+                        className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 ${
+                          inputErrors[`${ex.id}-reps-max`] ? 'border-red-500 focus:ring-red-500' : 'focus:ring-blue-500'
+                        }`}
+                        placeholder="최대 (예: 12)"
+                      />
+                      {inputErrors[`${ex.id}-reps-max`] && (
+                        <p className="text-sm text-red-600 mt-1">{inputErrors[`${ex.id}-reps-max`]}</p>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">휴식 시간</label>
                   <input
-                    type="number"
-                    min={0}
-                    max={3600}
+                    type="text"
+                    inputMode="numeric"
                     value={ex.restSeconds === "" ? "" : String(ex.restSeconds)}
                     onChange={(e) => {
-                      const newEx = { ...ex, restSeconds: e.target.value === "" ? "" : Number(e.target.value) };
-                      updateExercise(ex.id, () => newEx);
+                      const val = e.target.value;
+                      const errorKey = `${ex.id}-rest`;
+                      
+                      if (val === "") {
+                        setInputErrors(prev => { const copy = {...prev}; delete copy[errorKey]; return copy; });
+                        const newEx = { ...ex, restSeconds: "" };
+                        updateExercise(ex.id, () => newEx);
+                      } else if (/^\d+$/.test(val) && Number(val) >= 0) {
+                        setInputErrors(prev => { const copy = {...prev}; delete copy[errorKey]; return copy; });
+                        const newEx = { ...ex, restSeconds: Number(val) };
+                        updateExercise(ex.id, () => newEx);
+                      } else {
+                        setInputErrors(prev => ({ ...prev, [errorKey]: "0 이상의 숫자를 입력해주세요" }));
+                      }
                     }}
-                    className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="휴식 시간(초)"
+                    className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 ${
+                      inputErrors[`${ex.id}-rest`] ? 'border-red-500 focus:ring-red-500' : 'focus:ring-blue-500'
+                    }`}
+                    placeholder="초 단위 (예: 60)"
                   />
-                  {/* Summary error shown below the exercise card */}
+                  {inputErrors[`${ex.id}-rest`] && (
+                    <p className="text-sm text-red-600 mt-1">{inputErrors[`${ex.id}-rest`]}</p>
+                  )}
 
+                  <label className="block text-sm font-medium text-slate-700 mb-1 mt-3">운동 의도</label>
                   <input
                     value={ex.intention}
                     onChange={(e) => updateExercise(ex.id, (prev) => ({ ...prev, intention: e.target.value }))}
-                    className="w-full mt-2 p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="의도"
+                    className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="예: 근력 향상, 근비대 등"
                   />
                 </div>
               </div>
 
+              <label className="block text-sm font-medium text-slate-700 mb-1">비고</label>
               <textarea
                 value={ex.note}
                 onChange={(e) => updateExercise(ex.id, (prev) => ({ ...prev, note: e.target.value }))}
                 className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 rows={2}
-                placeholder="비고"
+                placeholder="추가 설명이나 주의사항을 입력하세요"
               />
               {errors.exercises?.[ex.id]?.summary && (
                 <p className="text-sm text-red-600 mt-3">{errors.exercises[ex.id].summary}</p>
@@ -275,6 +444,9 @@ export default function Page() {
           <button onClick={addExercise} className="w-full bg-blue-600 text-white rounded-lg py-3">
             + 운동 추가하기
           </button>
+          {exercisesError && (
+            <p className="text-sm text-red-600 mt-3 text-center">{exercisesError}</p>
+          )}
         </section>
       </div>
 
