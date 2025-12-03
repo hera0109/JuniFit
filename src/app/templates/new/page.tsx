@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Trash } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 type Exercise = {
   id: string;
@@ -37,6 +38,11 @@ export default function Page() {
   }>({});
   const [exercisesError, setExercisesError] = useState<string>("");
   const [inputErrors, setInputErrors] = useState<Record<string, string>>({});
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [savedProgramInfo, setSavedProgramInfo] = useState<{ title: string; exerciseCount: number } | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicateTitle, setDuplicateTitle] = useState("");
 
   const addExercise = () => {
     setExercises((prev) => [
@@ -132,6 +138,9 @@ export default function Page() {
   };
 
   const save = async () => {
+    // 저장 중 중복 클릭 방지
+    if (isSaving) return;
+
     // Check for input errors first
     const hasInputErrors = Object.keys(inputErrors).length > 0;
     if (hasInputErrors) {
@@ -148,10 +157,25 @@ export default function Page() {
       return;
     }
 
+    setIsSaving(true);
+
     try {
+      // 프로그램 제목 중복 체크
+      const { data: existingPrograms, error: checkError } = await supabase
+        .from('programs')
+        .select('id, title')
+        .eq('title', title.trim());
+
+      if (checkError) throw checkError;
+
+      if (existingPrograms && existingPrograms.length > 0) {
+        setDuplicateTitle(title.trim());
+        setShowDuplicateModal(true);
+        setIsSaving(false);
+        return;
+      }
+
       // Step 1: programs 테이블에 부모 데이터 저장
-      // TODO: Supabase 연결 후 아래 코드 활성화
-      /*
       const { data: programData, error: programError } = await supabase
         .from('programs')
         .insert({
@@ -165,10 +189,6 @@ export default function Page() {
       if (!programData) throw new Error('프로그램 저장에 실패했습니다.');
 
       const programId = programData.id;
-      */
-
-      // 임시: DB 연결 전 시뮬레이션
-      const programId = `prog_${Date.now()}`;
       console.log('Step 1: Program saved', { id: programId, title, description });
 
       // Step 2: UI 상태를 DB 포맷으로 변환
@@ -197,25 +217,25 @@ export default function Page() {
       console.log('Step 2: Exercises converted', programExercises);
 
       // Step 3: program_exercises 테이블에 일괄 저장
-      // TODO: Supabase 연결 후 아래 코드 활성화
-      /*
       const { error: exercisesError } = await supabase
         .from('program_exercises')
         .insert(programExercises);
 
       if (exercisesError) throw exercisesError;
-      */
 
       console.log('Step 3: Exercises saved to DB');
 
-      // 성공 메시지
-      alert(`프로그램이 성공적으로 저장되었습니다!\n\n제목: ${title}\n운동 개수: ${programExercises.length}개`);
-      
-      // 메인 페이지로 이동
-      router.push("/");
+      // 성공 정보 저장 및 팝업 표시
+      setSavedProgramInfo({
+        title: title,
+        exerciseCount: programExercises.length
+      });
+      setIsSaving(false);
+      setShowSuccessModal(true);
 
     } catch (error) {
       console.error('Save error:', error);
+      setIsSaving(false);
       alert(`저장 중 오류가 발생했습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류'}`);
     }
   };
@@ -469,10 +489,124 @@ export default function Page() {
 
       {/* Save button - sticky bottom */}
       <div className="fixed left-0 right-0 bottom-4 flex justify-center">
-        <button onClick={save} className="w-full max-w-md bg-green-600 text-white rounded-full py-3 mx-4 shadow-lg">
-          저장하기
+        <button 
+          onClick={save} 
+          disabled={isSaving}
+          className={`w-full max-w-md text-white rounded-full py-3 mx-4 shadow-lg transition-colors ${
+            isSaving 
+              ? 'bg-gray-400 cursor-not-allowed' 
+              : 'bg-green-600 hover:bg-green-700'
+          }`}
+        >
+          {isSaving ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              저장 중...
+            </span>
+          ) : (
+            '저장하기'
+          )}
         </button>
       </div>
+
+      {/* Success Modal */}
+      {showSuccessModal && savedProgramInfo && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="text-2xl">✅</span>
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">저장 완료!</h2>
+              <p className="text-slate-600">프로그램이 성공적으로 저장되었습니다</p>
+            </div>
+
+            {/* 프로그램 정보 요약 */}
+            <div className="mb-6 bg-gray-50 rounded-lg p-4">
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-slate-600">프로그램 제목</span>
+                  <span className="font-medium text-slate-800">{savedProgramInfo.title}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-600">등록된 운동</span>
+                  <span className="font-medium text-slate-800">{savedProgramInfo.exerciseCount}개</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 버튼 */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowSuccessModal(false);
+                  setSavedProgramInfo(null);
+                  // 폼 초기화
+                  setTitle("");
+                  setDescription("");
+                  setExercises([
+                    { id: String(Date.now()), name: "", target: { sets: "", reps: { min: "", max: "" } }, restSeconds: "", intention: "", note: "" }
+                  ]);
+                  setErrors({});
+                  setInputErrors({});
+                }}
+                className="flex-1 px-4 py-3 text-slate-600 bg-gray-100 rounded-xl font-medium hover:bg-gray-200 transition-colors"
+              >
+                새 프로그램 만들기
+              </button>
+              <button
+                onClick={() => {
+                  router.push('/');
+                }}
+                className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors"
+              >
+                홈으로 이동
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Name Modal */}
+      {showDuplicateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="text-2xl">⚠️</span>
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">중복된 프로그램 이름</h2>
+              <p className="text-slate-600">이미 존재하는 프로그램 이름입니다</p>
+            </div>
+
+            {/* 중복 정보 */}
+            <div className="mb-6 bg-red-50 rounded-lg p-4 border border-red-200">
+              <div className="text-center">
+                <p className="text-sm text-slate-600 mb-2">중복된 이름</p>
+                <p className="font-semibold text-slate-800 text-lg">"{duplicateTitle}"</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 text-center mb-6">
+              다른 이름을 사용해주세요
+            </p>
+
+            {/* 버튼 */}
+            <button
+              onClick={() => {
+                setShowDuplicateModal(false);
+                setDuplicateTitle("");
+              }}
+              className="w-full px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

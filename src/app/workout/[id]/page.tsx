@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
-import { findTemplateById } from "@/data/mockData";
+import { getProgramById, createWorkoutSession, saveWorkoutSet, completeWorkoutSession } from "@/lib/api";
+import type { ProgramWithExercises } from "@/lib/api";
 
 type SetInput = {
   weight: string;
@@ -22,28 +23,53 @@ type InputErrors = {
 
 export default function WorkoutDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
-  const program = findTemplateById(params.id);
+  const [program, setProgram] = useState<ProgramWithExercises | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   
   // 각 운동의 접힘/펼침 상태 (첫 번째 운동만 기본적으로 펼쳐짐)
-  const [expandedExercise, setExpandedExercise] = useState<string>(program?.exercises[0]?.id || "");
+  const [expandedExercise, setExpandedExercise] = useState<string>("");
   
   // 입력 오류 상태
   const [errors, setErrors] = useState<InputErrors>({});
   
   // 운동 완료 팝업 상태
   const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   // 각 운동의 세트별 입력값 저장
-  const [exerciseInputs, setExerciseInputs] = useState<Record<string, SetInput[]>>(() => {
-    const initialInputs: Record<string, SetInput[]> = {};
-    program?.exercises.forEach((exercise) => {
-      initialInputs[exercise.id] = Array(exercise.targetSets).fill(null).map(() => ({
-        weight: "",
-        reps: "",
-      }));
-    });
-    return initialInputs;
-  });
+  const [exerciseInputs, setExerciseInputs] = useState<Record<string, SetInput[]>>({});
+
+  useEffect(() => {
+    async function fetchProgram() {
+      const data = await getProgramById(params.id);
+      setProgram(data);
+      
+      if (data) {
+        // 첫 번째 운동을 펼침
+        setExpandedExercise(data.exercises[0]?.id || "");
+        
+        // 운동 세션 생성
+        const session = await createWorkoutSession(params.id);
+        if (session) {
+          setSessionId(session.id);
+        }
+        
+        // 입력값 초기화
+        const initialInputs: Record<string, SetInput[]> = {};
+        data.exercises.forEach((exercise) => {
+          initialInputs[exercise.id] = Array(exercise.target_sets).fill(null).map(() => ({
+            weight: "",
+            reps: "",
+          }));
+        });
+        setExerciseInputs(initialInputs);
+      }
+      
+      setLoading(false);
+    }
+    fetchProgram();
+  }, [params.id]);
 
   if (!program) {
     return (
@@ -53,17 +79,21 @@ export default function WorkoutDetailPage({ params }: { params: { id: string } }
             <Link href="/workout" className="text-slate-600 mr-4">
               <ArrowLeft className="w-6 h-6" />
             </Link>
-            <h1 className="text-xl font-bold">프로그램을 찾을 수 없습니다</h1>
+            <h1 className="text-xl font-bold">
+              {loading ? "로딩 중..." : "프로그램을 찾을 수 없습니다"}
+            </h1>
           </header>
-          <div className="bg-white rounded-xl shadow-md p-8 text-center">
-            <p className="text-slate-600 mb-4">요청하신 프로그램을 찾을 수 없습니다.</p>
-            <Link 
-              href="/workout"
-              className="inline-block bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              프로그램 목록으로 돌아가기
-            </Link>
-          </div>
+          {!loading && (
+            <div className="bg-white rounded-xl shadow-md p-8 text-center">
+              <p className="text-slate-600 mb-4">요청하신 프로그램을 찾을 수 없습니다.</p>
+              <Link 
+                href="/workout"
+                className="inline-block bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                프로그램 목록으로 돌아가기
+              </Link>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -169,13 +199,13 @@ export default function WorkoutDetailPage({ params }: { params: { id: string } }
                       </h3>
                       <div className="flex items-center gap-4 mt-1">
                         <span className="text-sm text-slate-600">
-                          {exercise.targetSets}세트
+                          {exercise.target_sets}세트
                         </span>
                         <span className="text-sm text-slate-600">
-                          {exercise.targetReps.min}~{exercise.targetReps.max}회
+                          {exercise.target_reps}회
                         </span>
                         <span className="text-sm text-slate-600">
-                          휴식 {exercise.restSeconds}초
+                          휴식 {exercise.rest_seconds}초
                         </span>
                       </div>
                       {exercise.intention && (
@@ -196,7 +226,7 @@ export default function WorkoutDetailPage({ params }: { params: { id: string } }
                 {isExpanded && (
                   <div className="px-6 pb-6 border-t border-gray-100">
                     <div className="space-y-5 mt-6">
-                      {Array.from({ length: exercise.targetSets }, (_, setIndex) => (
+                      {Array.from({ length: exercise.target_sets }, (_, setIndex) => (
                         <div key={setIndex} className="flex items-center gap-4">
                           {/* 세트 번호 */}
                           <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
@@ -272,8 +302,15 @@ export default function WorkoutDetailPage({ params }: { params: { id: string } }
         {/* 운동 완료 버튼 */}
         <div className="mt-8">
           <button 
-            className="w-full bg-blue-600 text-white rounded-full py-4 font-semibold text-lg shadow-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-            onClick={() => {
+            disabled={isSaving}
+            className={`w-full text-white rounded-full py-4 font-semibold text-lg shadow-lg transition-colors ${
+              isSaving 
+                ? 'bg-gray-400 cursor-not-allowed' 
+                : 'bg-blue-600 hover:bg-blue-700'
+            }`}
+            onClick={async () => {
+              if (isSaving) return;
+
               // 입력 오류 체크
               const hasErrors = Object.values(errors).some(exerciseErrors =>
                 Object.values(exerciseErrors).some(setErrors =>
@@ -285,12 +322,69 @@ export default function WorkoutDetailPage({ params }: { params: { id: string } }
                 alert("입력 오류를 수정해주세요.");
                 return;
               }
+
+              setIsSaving(true);
               
-              // 운동 완료 팝업 표시
-              setShowCompletionModal(true);
+              try {
+                // 운동 기록 저장
+                if (sessionId && program) {
+                  console.log('운동 기록 저장 시작...');
+                  
+                  for (const exercise of program.exercises) {
+                    const inputs = exerciseInputs[exercise.id] || [];
+                    for (let i = 0; i < inputs.length; i++) {
+                      const set = inputs[i];
+                      if (set.weight.trim() !== '' && set.reps.trim() !== '') {
+                        const result = await saveWorkoutSet(
+                          sessionId,
+                          exercise.name,
+                          i + 1,
+                          parseFloat(set.weight),
+                          parseInt(set.reps)
+                        );
+                        
+                        if (!result) {
+                          throw new Error(`${exercise.name} ${i + 1}세트 저장 실패`);
+                        }
+                        
+                        console.log(`${exercise.name} ${i + 1}세트 저장 완료`);
+                      }
+                    }
+                  }
+                  
+                  // 세션 완료 처리
+                  console.log('세션 완료 처리 중...');
+                  const sessionResult = await completeWorkoutSession(sessionId);
+                  
+                  if (!sessionResult) {
+                    throw new Error('세션 완료 처리 실패');
+                  }
+                  
+                  console.log('모든 운동 기록 저장 완료!');
+                }
+                
+                setIsSaving(false);
+                // 운동 완료 팝업 표시
+                setShowCompletionModal(true);
+                
+              } catch (error) {
+                console.error('운동 기록 저장 실패:', error);
+                setIsSaving(false);
+                alert(`운동 기록 저장 중 오류가 발생했습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+              }
             }}
           >
-            운동 완료
+            {isSaving ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                저장 중...
+              </span>
+            ) : (
+              '운동 완료'
+            )}
           </button>
         </div>
 

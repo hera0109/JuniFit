@@ -1,10 +1,24 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { mockTemplates } from "@/data/mockData";
+import { getPrograms } from "@/lib/api";
+import type { ProgramWithExercises } from "@/lib/api";
 
 export default function WorkoutPage() {
+  const [programs, setPrograms] = useState<ProgramWithExercises[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchPrograms() {
+      const data = await getPrograms();
+      setPrograms(data);
+      setLoading(false);
+    }
+    fetchPrograms();
+  }, []);
+
   return (
     <div className="min-h-screen px-4 pt-6 pb-8">
       <div className="max-w-md mx-auto">
@@ -17,25 +31,35 @@ export default function WorkoutPage() {
         </header>
 
         {/* 프로그램 목록 */}
-        <section className="flex flex-col gap-8">
-          {mockTemplates.map((template) => (
-            <Link key={template.id} href={`/workout/${template.id}`}>
-              <div className="bg-white rounded-xl shadow-md p-8 hover:shadow-lg transition-all duration-200 cursor-pointer border border-gray-100">
-                <h3 className="text-xl font-semibold text-slate-800 mb-4">
-                  {template.title}
-                </h3>
-                <p className="text-slate-600 text-base mb-6 leading-relaxed">
-                  {template.description}
-                </p>
-                <div className="flex items-center">
-                  <span className="text-blue-600 text-base font-medium">
-                    운동 {template.exerciseCount}개
-                  </span>
+        {loading ? (
+          <div className="text-center py-12">
+            <p className="text-slate-600">로딩 중...</p>
+          </div>
+        ) : programs.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-slate-600">등록된 프로그램이 없습니다.</p>
+          </div>
+        ) : (
+          <section className="flex flex-col gap-8">
+            {programs.map((program) => (
+              <Link key={program.id} href={`/workout/${program.id}`}>
+                <div className="bg-white rounded-xl shadow-md p-8 hover:shadow-lg transition-all duration-200 cursor-pointer border border-gray-100">
+                  <h3 className="text-xl font-semibold text-slate-800 mb-4">
+                    {program.title}
+                  </h3>
+                  <p className="text-slate-600 text-base mb-6 leading-relaxed">
+                    {program.description}
+                  </p>
+                  <div className="flex items-center">
+                    <span className="text-blue-600 text-base font-medium">
+                      운동 {program.exerciseCount}개
+                    </span>
+                  </div>
                 </div>
-              </div>
-            </Link>
-          ))}
-        </section>
+              </Link>
+            ))}
+          </section>
+        )}
       </div>
     </div>
   );
