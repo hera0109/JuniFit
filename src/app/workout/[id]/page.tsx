@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
@@ -227,9 +227,9 @@ export default function WorkoutDetailPage({ params }: { params: { id: string } }
                   <div className="px-6 pb-6 border-t border-gray-100">
                     <div className="space-y-5 mt-6">
                       {Array.from({ length: exercise.target_sets }, (_, setIndex) => (
-                        <div key={setIndex} className="flex items-center gap-4">
+                        <div key={setIndex} className="grid grid-cols-[auto_1fr_1fr] gap-4 items-start">
                           {/* 세트 번호 */}
-                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mt-2">
                             <span className="text-sm font-medium text-blue-800">
                               {setIndex + 1}
                             </span>

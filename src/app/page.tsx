@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Play, FolderOpen } from "lucide-react";
+import { Plus, Play, FolderOpen, History } from "lucide-react";
 
 export default function Page() {
   return (
@@ -35,12 +35,14 @@ export default function Page() {
         <span className="text-base font-medium text-slate-800">저장된 프로그램 목록 관리</span>
       </Link>
 
-      <section className="w-full mt-8">
-        <h2 className="text-lg font-semibold mb-2">최근 운동 기록</h2>
-        <div className="bg-white rounded-xl shadow-sm p-4 text-center text-slate-500">
-          아직 기록된 운동이 없습니다.
-        </div>
-      </section>
+      {/* 운동 기록 보기 버튼 */}
+      <Link
+        href="/logs"
+        className="w-full mt-3 bg-white rounded-xl shadow-md p-4 flex items-center justify-center gap-3 hover:shadow-lg transition-shadow border border-gray-100"
+      >
+        <History className="w-5 h-5 text-green-600" />
+        <span className="text-base font-medium text-slate-800">지난 운동 기록 보기</span>
+      </Link>
     </main>
   );
 }
