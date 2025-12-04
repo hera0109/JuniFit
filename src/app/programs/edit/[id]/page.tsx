@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { Trash, ArrowLeft } from "lucide-react";
@@ -34,11 +34,7 @@ export default function ProgramEditPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
-  useEffect(() => {
-    fetchProgram();
-  }, [programId]);
-
-  async function fetchProgram() {
+  const fetchProgram = useCallback(async () => {
     setLoading(true);
     try {
       // 프로그램 정보 가져오기
@@ -87,7 +83,11 @@ export default function ProgramEditPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [programId, router]);
+
+  useEffect(() => {
+    fetchProgram();
+  }, [fetchProgram]);
 
   const addExercise = () => {
     setExercises((prev) => [

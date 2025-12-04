@@ -462,7 +462,7 @@ export default function Page() {
             <div className="mb-6 bg-red-50 rounded-lg p-4 border border-red-200">
               <div className="text-center">
                 <p className="text-sm text-slate-600 mb-2">중복된 이름</p>
-                <p className="font-semibold text-slate-800 text-lg">"{duplicateTitle}"</p>
+                <p className="font-semibold text-slate-800 text-lg">&ldquo;{duplicateTitle}&rdquo;</p>
               </div>
             </div>
 
