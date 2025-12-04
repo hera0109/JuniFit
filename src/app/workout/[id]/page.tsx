@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Check, Timer, Lock } from "lucide-react";
 import { getProgramById, createWorkoutSession, saveWorkoutSet, completeWorkoutSession } from "@/lib/api";
 import type { ProgramWithExercises } from "@/lib/api";
 
@@ -32,8 +32,8 @@ export default function WorkoutDetailPage({ params }: Props) {
   const [loading, setLoading] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
   
-  // 각 운동의 접힘/펼침 상태 (첫 번째 운동만 기본적으로 펼쳐짐)
-  const [expandedExercise, setExpandedExercise] = useState<string>("");
+  // 순차 진행을 위한 현재 운동 인덱스
+  const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   
   // 입력 오류 상태
   const [errors, setErrors] = useState<InputErrors>({});
@@ -42,8 +42,16 @@ export default function WorkoutDetailPage({ params }: Props) {
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   
+  // 휴식 타이머 상태
+  const [isTimerOpen, setIsTimerOpen] = useState(false);
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const [remainingTime, setRemainingTime] = useState(0);
+  
   // 각 운동의 세트별 입력값 저장
   const [exerciseInputs, setExerciseInputs] = useState<Record<string, SetInput[]>>({});
+  
+  // 운동 카드 참조 (스크롤용)
+  const exerciseRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     async function fetchProgram() {
@@ -52,9 +60,6 @@ export default function WorkoutDetailPage({ params }: Props) {
       setProgram(data);
       
       if (data) {
-        // 첫 번째 운동을 펼침
-        setExpandedExercise(data.exercises[0]?.id || "");
-        
         // 운동 세션 생성
         const session = await createWorkoutSession(resolvedParams.id);
         if (session) {
@@ -76,6 +81,128 @@ export default function WorkoutDetailPage({ params }: Props) {
     }
     fetchProgram();
   }, [params]);
+
+  // 타이머 로직
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    
+    if (isTimerOpen && remainingTime > 0) {
+      interval = setInterval(() => {
+        setRemainingTime((prev) => {
+          if (prev <= 1) {
+            handleTimerComplete();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isTimerOpen, remainingTime]);
+
+  // 타이머 완료 처리
+  const handleTimerComplete = () => {
+    setIsTimerOpen(false);
+    moveToNextExercise();
+  };
+
+  // 다음 운동으로 이동
+  const moveToNextExercise = () => {
+    if (!program) return;
+    
+    const nextIndex = currentExerciseIndex + 1;
+    
+    if (nextIndex >= program.exercises.length) {
+      handleAllExercisesComplete();
+    } else {
+      setCurrentExerciseIndex(nextIndex);
+      
+      setTimeout(() => {
+        const nextExercise = program.exercises[nextIndex];
+        const ref = exerciseRefs.current[nextExercise.id];
+        if (ref) {
+          ref.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+    }
+  };
+
+  // 모든 운동 완료 처리
+  const handleAllExercisesComplete = async () => {
+    if (isSaving || !program) return;
+    
+    setIsSaving(true);
+    
+    try {
+      if (sessionId) {
+        for (const exercise of program.exercises) {
+          const inputs = exerciseInputs[exercise.id] || [];
+          for (let i = 0; i < inputs.length; i++) {
+            const set = inputs[i];
+            if (set.weight.trim() !== '' && set.reps.trim() !== '') {
+              const result = await saveWorkoutSet(
+                sessionId,
+                exercise.name,
+                i + 1,
+                parseFloat(set.weight),
+                parseInt(set.reps)
+              );
+              
+              if (!result) {
+                throw new Error(`${exercise.name} ${i + 1}세트 저장 실패`);
+              }
+            }
+          }
+        }
+        
+        const sessionResult = await completeWorkoutSession(sessionId);
+        if (!sessionResult) {
+          throw new Error('세션 완료 처리 실패');
+        }
+      }
+      
+      setIsSaving(false);
+      setShowCompletionModal(true);
+      
+    } catch (error) {
+      console.error('운동 기록 저장 실패:', error);
+      setIsSaving(false);
+      alert(`운동 기록 저장 중 오류가 발생했습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    }
+  };
+
+  // 운동 완료 및 휴식 버튼 클릭
+  const handleExerciseComplete = (exerciseIndex: number) => {
+    if (!program) return;
+    
+    const exercise = program.exercises[exerciseIndex];
+    const isLastExercise = exerciseIndex === program.exercises.length - 1;
+    
+    if (isLastExercise) {
+      handleAllExercisesComplete();
+    } else {
+      const restTime = exercise.rest_seconds || 60;
+      setTimerSeconds(restTime);
+      setRemainingTime(restTime);
+      setIsTimerOpen(true);
+    }
+  };
+
+  // 타이머 스킵
+  const handleTimerSkip = () => {
+    setIsTimerOpen(false);
+    moveToNextExercise();
+  };
+
+  // 시간 포맷팅
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   if (!program) {
     return (
@@ -105,15 +232,9 @@ export default function WorkoutDetailPage({ params }: Props) {
     );
   }
 
-  // 특정 운동의 모든 세트가 완료되었는지 확인
-  const isExerciseCompleted = (exerciseId: string) => {
-    const inputs = exerciseInputs[exerciseId] || [];
-    return inputs.every((set) => set.weight.trim() !== "" && set.reps.trim() !== "");
-  };
-
-  // 입력 검증 함수
+  // 입력값 검증
   const validateInput = (value: string, field: 'weight' | 'reps'): string | null => {
-    if (value.trim() === '') return null; // 빈 값은 오류가 아님
+    if (value.trim() === '') return null;
     
     const numValue = parseFloat(value);
     if (isNaN(numValue) || numValue <= 0) {
@@ -129,9 +250,8 @@ export default function WorkoutDetailPage({ params }: Props) {
 
   // 세트 입력값 업데이트
   const updateSetInput = (exerciseId: string, setIndex: number, field: keyof SetInput, value: string) => {
-    // 숫자만 입력 가능하도록 필터링
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) {
-      return; // 숫자가 아닌 경우 업데이트하지 않음
+      return;
     }
     
     setExerciseInputs(prev => ({
@@ -141,7 +261,6 @@ export default function WorkoutDetailPage({ params }: Props) {
       )
     }));
 
-    // 실시간 검증
     const error = validateInput(value, field);
     setErrors(prev => ({
       ...prev,
@@ -155,94 +274,142 @@ export default function WorkoutDetailPage({ params }: Props) {
     }));
   };
 
-  // 운동 카드 토글 (완료된 운동은 접히고 다음 운동이 펼쳐짐)
-  const toggleExercise = (exerciseId: string) => {
-    if (expandedExercise === exerciseId) {
-      setExpandedExercise("");
-    } else {
-      setExpandedExercise(exerciseId);
-    }
+  // 현재 운동의 입력이 유효한지 확인
+  const isCurrentExerciseValid = () => {
+    if (!program) return false;
+    const exercise = program.exercises[currentExerciseIndex];
+    const inputs = exerciseInputs[exercise.id] || [];
+    return inputs.some(set => set.weight.trim() !== '' && set.reps.trim() !== '');
   };
 
+  // 진행률 계산
+  const progressPercentage = ((currentExerciseIndex) / program.exercises.length) * 100;
+
   return (
-    <div className="min-h-screen px-4 pt-6 pb-8 bg-gray-50">
+    <div className="min-h-screen px-4 pt-6 pb-32 bg-gray-50">
       <div className="max-w-md mx-auto">
         {/* Header */}
-        <header className="flex items-center mb-6">
+        <header className="flex items-center mb-4">
           <Link href="/workout" className="text-slate-600 mr-4">
             <ArrowLeft className="w-6 h-6" />
           </Link>
-          <div>
+          <div className="flex-1">
             <h1 className="text-xl font-bold">{program.title}</h1>
             <p className="text-sm text-slate-600">{program.description}</p>
           </div>
         </header>
 
+        {/* 진행 상태 바 */}
+        <div className="bg-white rounded-xl shadow-md p-4 mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-slate-600">진행 상황</span>
+            <span className="text-sm font-bold text-blue-600">
+              {currentExerciseIndex + 1} / {program.exercises.length}
+            </span>
+          </div>
+          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500"
+              style={{ width: `${progressPercentage}%` }}
+            />
+          </div>
+        </div>
+
         {/* 운동 목록 */}
-        <section className="flex flex-col gap-8">
+        <section className="flex flex-col gap-4">
           {program.exercises.map((exercise, exerciseIndex) => {
-            const isCompleted = isExerciseCompleted(exercise.id);
-            const isExpanded = expandedExercise === exercise.id;
+            const isCompleted = exerciseIndex < currentExerciseIndex;
+            const isCurrent = exerciseIndex === currentExerciseIndex;
+            const isLocked = exerciseIndex > currentExerciseIndex;
+            const isLastExercise = exerciseIndex === program.exercises.length - 1;
 
             return (
               <div 
-                key={exercise.id} 
-                className={`bg-white rounded-xl shadow-md transition-all duration-300 ${
-                  isCompleted ? "opacity-70 bg-green-50" : ""
-                }`}
+                key={exercise.id}
+                ref={(el) => { exerciseRefs.current[exercise.id] = el; }}
+                className={`bg-white rounded-xl shadow-md transition-all duration-300 overflow-hidden ${
+                  isCompleted ? "opacity-60" : ""
+                } ${isCurrent ? "ring-2 ring-blue-500" : ""}`}
               >
                 {/* 운동 헤더 */}
                 <div
-                  className={`p-6 cursor-pointer transition-colors ${
-                    isCompleted ? "bg-green-100" : "hover:bg-gray-50"
+                  className={`p-4 transition-colors ${
+                    isCompleted ? "bg-green-50" : 
+                    isCurrent ? "bg-blue-50" : 
+                    "bg-gray-50"
                   }`}
-                  onClick={() => toggleExercise(exercise.id)}
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <h3 className={`font-semibold ${isCompleted ? "text-green-800" : "text-slate-800"}`}>
-                        {exerciseIndex + 1}. {exercise.name}
-                      </h3>
-                      <div className="flex items-center gap-4 mt-1">
-                        <span className="text-sm text-slate-600">
-                          {exercise.target_sets}세트
-                        </span>
-                        <span className="text-sm text-slate-600">
-                          {exercise.target_reps}회
-                        </span>
-                        <span className="text-sm text-slate-600">
-                          휴식 {exercise.rest_seconds}초
-                        </span>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                        isCompleted ? "bg-green-500" :
+                        isCurrent ? "bg-blue-500" :
+                        "bg-gray-300"
+                      }`}>
+                        {isCompleted ? (
+                          <Check className="w-5 h-5 text-white" />
+                        ) : isLocked ? (
+                          <Lock className="w-4 h-4 text-white" />
+                        ) : (
+                          <span className="text-white font-bold text-sm">{exerciseIndex + 1}</span>
+                        )}
                       </div>
-                      {exercise.intention && (
-                        <p className="text-xs text-blue-600 mt-1">{exercise.intention}</p>
-                      )}
+                      
+                      <div>
+                        <h3 className={`font-semibold ${
+                          isCompleted ? "text-green-800" : 
+                          isCurrent ? "text-blue-800" : 
+                          "text-slate-500"
+                        }`}>
+                          {exercise.name}
+                        </h3>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-xs text-slate-500">
+                            {exercise.target_sets}세트 × {exercise.target_reps}회
+                          </span>
+                          {exercise.rest_seconds && (
+                            <>
+                              <span className="text-xs text-slate-400">•</span>
+                              <span className="text-xs text-slate-500">
+                                휴식 {exercise.rest_seconds}초
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div className="ml-2">
-                      {isExpanded ? (
-                        <ChevronDown className="w-5 h-5 text-slate-400" />
+                    
+                    <div>
+                      {isCurrent ? (
+                        <ChevronDown className="w-5 h-5 text-blue-500" />
                       ) : (
-                        <ChevronRight className="w-5 h-5 text-slate-400" />
+                        <ChevronRight className="w-5 h-5 text-slate-300" />
                       )}
                     </div>
                   </div>
                 </div>
 
-                {/* 운동 상세 (접이식) */}
-                {isExpanded && (
-                  <div className="px-6 pb-6 border-t border-gray-100">
-                    <div className="space-y-5 mt-6">
+                {/* 운동 입력 영역 (현재 운동만 펼침) */}
+                {isCurrent && (
+                  <div className="p-4 border-t border-gray-100">
+                    {exercise.intention && (
+                      <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-100">
+                        <p className="text-sm text-yellow-800">
+                          💡 {exercise.intention}
+                        </p>
+                      </div>
+                    )}
+                    
+                    <div className="space-y-4">
                       {Array.from({ length: exercise.target_sets }, (_, setIndex) => (
-                        <div key={setIndex} className="grid grid-cols-[auto_1fr_1fr] gap-4 items-start">
-                          {/* 세트 번호 */}
-                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mt-2">
-                            <span className="text-sm font-medium text-blue-800">
+                        <div key={setIndex} className="grid grid-cols-[auto_1fr_1fr] gap-3 items-start">
+                          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                            <span className="text-sm font-bold text-blue-800">
                               {setIndex + 1}
                             </span>
                           </div>
                           
-                          {/* 무게 입력 */}
-                          <div className="flex-1">
+                          <div>
                             <input
                               type="text"
                               inputMode="numeric"
@@ -255,18 +422,10 @@ export default function WorkoutDetailPage({ params }: Props) {
                                   : "border-gray-300 focus:ring-blue-500"
                               }`}
                             />
-                            <label className="block text-xs text-center text-slate-500 mt-1">
-                              무게
-                            </label>
-                            {errors[exercise.id]?.[setIndex]?.weight && (
-                              <p className="text-xs text-red-500 text-center mt-1">
-                                {errors[exercise.id][setIndex].weight}
-                              </p>
-                            )}
+                            <label className="block text-xs text-center text-slate-500 mt-1">무게</label>
                           </div>
 
-                          {/* 횟수 입력 */}
-                          <div className="flex-1">
+                          <div>
                             <input
                               type="text"
                               inputMode="numeric"
@@ -279,25 +438,60 @@ export default function WorkoutDetailPage({ params }: Props) {
                                   : "border-gray-300 focus:ring-blue-500"
                               }`}
                             />
-                            <label className="block text-xs text-center text-slate-500 mt-1">
-                              횟수
-                            </label>
-                            {errors[exercise.id]?.[setIndex]?.reps && (
-                              <p className="text-xs text-red-500 text-center mt-1">
-                                {errors[exercise.id][setIndex].reps}
-                              </p>
-                            )}
+                            <label className="block text-xs text-center text-slate-500 mt-1">횟수</label>
                           </div>
                         </div>
                       ))}
                     </div>
 
-                    {/* 완료 상태 표시 */}
-                    {isCompleted && (
-                      <div className="mt-4 p-2 bg-green-100 rounded-lg text-center">
-                        <span className="text-green-800 font-medium text-sm">✓ 완료</span>
-                      </div>
-                    )}
+                    {/* 버튼 구분선 */}
+                    <div className="mt-6 pt-5 border-t-2 border-dashed border-gray-200">
+                      <button
+                        onClick={() => handleExerciseComplete(exerciseIndex)}
+                        disabled={!isCurrentExerciseValid() || isSaving}
+                        className={`w-full py-4 rounded-xl font-semibold text-lg transition-all flex items-center justify-center gap-2 ${
+                          isCurrentExerciseValid() && !isSaving
+                            ? isLastExercise
+                              ? "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white shadow-lg ring-2 ring-green-300 ring-offset-2"
+                              : "bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-lg ring-2 ring-blue-300 ring-offset-2"
+                            : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                        }`}
+                      >
+                      {isSaving ? (
+                        <>
+                          <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          저장 중...
+                        </>
+                      ) : isLastExercise ? (
+                        <>
+                          <Check className="w-5 h-5" />
+                          운동 완료!
+                        </>
+                      ) : (
+                        <>
+                          <Timer className="w-5 h-5" />
+                          운동 완료 & 휴식 시작
+                        </>
+                      )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {isCompleted && (
+                  <div className="px-4 pb-4">
+                    <div className="flex flex-wrap gap-2">
+                      {exerciseInputs[exercise.id]?.map((set, idx) => (
+                        set.weight && set.reps ? (
+                          <span key={idx} className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                            {idx + 1}세트: {set.weight}kg × {set.reps}회
+                          </span>
+                        ) : null
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -305,162 +499,140 @@ export default function WorkoutDetailPage({ params }: Props) {
           })}
         </section>
 
-        {/* 운동 완료 버튼 */}
-        <div className="mt-8">
-          <button 
+        {/* 오늘의 운동 완료하기 버튼 */}
+        <div className="mt-8 pb-8">
+          <button
+            onClick={handleAllExercisesComplete}
             disabled={isSaving}
-            className={`w-full text-white rounded-full py-4 font-semibold text-lg shadow-lg transition-colors ${
-              isSaving 
-                ? 'bg-gray-400 cursor-not-allowed' 
-                : 'bg-blue-600 hover:bg-blue-700'
-            }`}
-            onClick={async () => {
-              if (isSaving) return;
-
-              // 입력 오류 체크
-              const hasErrors = Object.values(errors).some(exerciseErrors =>
-                Object.values(exerciseErrors).some(setErrors =>
-                  setErrors.weight || setErrors.reps
-                )
-              );
-              
-              if (hasErrors) {
-                alert("입력 오류를 수정해주세요.");
-                return;
-              }
-
-              setIsSaving(true);
-              
-              try {
-                // 운동 기록 저장
-                if (sessionId && program) {
-                  console.log('운동 기록 저장 시작...');
-                  
-                  for (const exercise of program.exercises) {
-                    const inputs = exerciseInputs[exercise.id] || [];
-                    for (let i = 0; i < inputs.length; i++) {
-                      const set = inputs[i];
-                      if (set.weight.trim() !== '' && set.reps.trim() !== '') {
-                        const result = await saveWorkoutSet(
-                          sessionId,
-                          exercise.name,
-                          i + 1,
-                          parseFloat(set.weight),
-                          parseInt(set.reps)
-                        );
-                        
-                        if (!result) {
-                          throw new Error(`${exercise.name} ${i + 1}세트 저장 실패`);
-                        }
-                        
-                        console.log(`${exercise.name} ${i + 1}세트 저장 완료`);
-                      }
-                    }
-                  }
-                  
-                  // 세션 완료 처리
-                  console.log('세션 완료 처리 중...');
-                  const sessionResult = await completeWorkoutSession(sessionId);
-                  
-                  if (!sessionResult) {
-                    throw new Error('세션 완료 처리 실패');
-                  }
-                  
-                  console.log('모든 운동 기록 저장 완료!');
-                }
-                
-                setIsSaving(false);
-                // 운동 완료 팝업 표시
-                setShowCompletionModal(true);
-                
-              } catch (error) {
-                console.error('운동 기록 저장 실패:', error);
-                setIsSaving(false);
-                alert(`운동 기록 저장 중 오류가 발생했습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류'}`);
-              }
-            }}
+            className="w-full py-4 bg-slate-700 hover:bg-slate-800 text-white rounded-xl font-semibold text-lg transition-colors shadow-md flex items-center justify-center gap-2"
           >
             {isSaving ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              <>
+                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
                 저장 중...
-              </span>
+              </>
             ) : (
-              '운동 완료'
+              <>
+                <Check className="w-5 h-5" />
+                오늘의 운동 완료하기
+              </>
             )}
           </button>
+          <p className="text-xs text-slate-500 text-center mt-2">
+            현재까지 입력한 기록만 저장됩니다
+          </p>
         </div>
+      </div>
 
-        {/* 운동 완료 팝업 */}
-        {showCompletionModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
-              <div className="text-center mb-6">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-2xl">🎉</span>
-                </div>
-                <h2 className="text-2xl font-bold text-slate-800 mb-2">운동 완료!</h2>
-                <p className="text-slate-600">오늘도 수고하셨습니다</p>
+      {/* 휴식 타이머 모달 */}
+      {isTimerOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center">
+            <div className="mb-6">
+              <Timer className="w-16 h-16 text-blue-600 mx-auto mb-4" />
+              <h2 className="text-xl font-bold text-slate-800 mb-2">휴식 시간</h2>
+              <p className="text-slate-600">잠시 쉬고 다음 운동을 준비하세요</p>
+            </div>
+            
+            <div className="mb-8">
+              <div className="text-6xl font-bold text-blue-600 mb-6 text-center">
+                {formatTime(remainingTime)}
               </div>
-
-              {/* 운동 기록 요약 */}
-              <div className="mb-6">
-                <h3 className="font-semibold text-slate-800 mb-3">오늘의 운동 기록</h3>
-                <div className="space-y-3">
-                  {program?.exercises.map((exercise) => {
-                    const inputs = exerciseInputs[exercise.id] || [];
-                    const completedSets = inputs.filter(set => set.weight.trim() !== '' && set.reps.trim() !== '');
-                    
-                    if (completedSets.length === 0) return null;
-                    
-                    return (
-                      <div key={exercise.id} className="bg-gray-50 rounded-lg p-3">
-                        <h4 className="font-medium text-slate-700 mb-2">{exercise.name}</h4>
-                        <div className="space-y-1">
-                          {inputs.map((set, index) => {
-                            if (set.weight.trim() === '' && set.reps.trim() === '') return null;
-                            
-                            return (
-                              <div key={index} className="flex justify-between text-sm">
-                                <span className="text-slate-600">{index + 1}세트</span>
-                                <span className="text-slate-800">
-                                  {set.weight || '0'}kg × {set.reps || '0'}회
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 버튼 */}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowCompletionModal(false)}
-                  className="flex-1 px-4 py-3 text-slate-600 bg-gray-100 rounded-xl font-medium hover:bg-gray-200 transition-colors"
-                >
-                  계속 운동하기
-                </button>
-                <button
-                  onClick={() => {
-                    console.log("운동 기록:", exerciseInputs);
-                    router.push('/');
-                  }}
-                  className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors"
-                >
-                  홈으로 이동
-                </button>
+              
+              <div className="flex justify-center">
+                <svg width="160" height="160" className="transform -rotate-90">
+                  <circle cx="80" cy="80" r="70" fill="none" stroke="#e5e7eb" strokeWidth="10" />
+                  <circle
+                    cx="80" cy="80" r="70" fill="none" stroke="#3b82f6" strokeWidth="10"
+                    strokeDasharray={2 * Math.PI * 70}
+                    strokeDashoffset={2 * Math.PI * 70 * (1 - remainingTime / timerSeconds)}
+                    strokeLinecap="round"
+                    className="transition-all duration-1000"
+                  />
+                </svg>
               </div>
             </div>
+
+            {currentExerciseIndex + 1 < program.exercises.length && (
+              <div className="mb-6 p-4 bg-gray-50 rounded-xl">
+                <p className="text-sm text-slate-500 mb-1">다음 운동</p>
+                <p className="font-semibold text-slate-800">
+                  {program.exercises[currentExerciseIndex + 1].name}
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={handleTimerSkip}
+              className="w-full py-4 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors shadow-md"
+            >
+              다음 운동 시작하기
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* 운동 완료 팝업 */}
+      {showCompletionModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="text-4xl">🎉</span>
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">운동 완료!</h2>
+              <p className="text-slate-600">오늘도 수고하셨습니다</p>
+            </div>
+
+            <div className="mb-6">
+              <h3 className="font-semibold text-slate-800 mb-3">오늘의 운동 기록</h3>
+              <div className="space-y-3">
+                {program?.exercises.map((exercise) => {
+                  const inputs = exerciseInputs[exercise.id] || [];
+                  const completedSets = inputs.filter(set => set.weight.trim() !== '' && set.reps.trim() !== '');
+                  
+                  if (completedSets.length === 0) return null;
+                  
+                  return (
+                    <div key={exercise.id} className="bg-gray-50 rounded-lg p-3">
+                      <h4 className="font-medium text-slate-700 mb-2">{exercise.name}</h4>
+                      <div className="space-y-1">
+                        {inputs.map((set, index) => {
+                          if (set.weight.trim() === '' && set.reps.trim() === '') return null;
+                          return (
+                            <div key={index} className="flex justify-between text-sm">
+                              <span className="text-slate-600">{index + 1}세트</span>
+                              <span className="text-slate-800">{set.weight || '0'}kg × {set.reps || '0'}회</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => router.push('/dashboard')}
+                className="flex-1 px-4 py-3 text-slate-600 bg-gray-100 rounded-xl font-medium hover:bg-gray-200 transition-colors"
+              >
+                대시보드 보기
+              </button>
+              <button
+                onClick={() => router.push('/')}
+                className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors"
+              >
+                홈으로 이동
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
