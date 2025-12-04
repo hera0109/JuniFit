@@ -193,3 +193,56 @@ export async function getWorkoutLogs() {
 
   return logsWithSets;
 }
+
+// 대시보드 데이터 조회
+export async function getDashboardData() {
+  // 1. 모든 완료된 세션 조회
+  const { data: sessions, error: sessionsError } = await supabase
+    .from('workout_sessions')
+    .select('id, started_at, ended_at')
+    .not('ended_at', 'is', null)
+    .order('started_at', { ascending: false });
+
+  if (sessionsError) {
+    console.error('Error fetching sessions:', sessionsError);
+    return null;
+  }
+
+  // 2. 모든 세트 데이터 조회 (볼륨 계산용)
+  const { data: sets, error: setsError } = await supabase
+    .from('workout_sets')
+    .select('weight, reps');
+
+  if (setsError) {
+    console.error('Error fetching sets:', setsError);
+    return null;
+  }
+
+  // 3. 이번 달 운동한 날짜들 계산
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+
+  const monthlyWorkoutDates = new Set<number>();
+  
+  sessions?.forEach((session) => {
+    const sessionDate = new Date(session.started_at);
+    if (sessionDate.getFullYear() === currentYear && sessionDate.getMonth() === currentMonth) {
+      monthlyWorkoutDates.add(sessionDate.getDate());
+    }
+  });
+
+  // 4. 총 볼륨 계산 (weight * reps)
+  const totalVolume = sets?.reduce((acc, set) => {
+    return acc + (set.weight || 0) * (set.reps || 0);
+  }, 0) || 0;
+
+  return {
+    totalSessions: sessions?.length || 0,
+    thisMonthCount: monthlyWorkoutDates.size,
+    monthlyWorkoutDates: Array.from(monthlyWorkoutDates),
+    totalVolume,
+    currentYear,
+    currentMonth,
+  };
+}

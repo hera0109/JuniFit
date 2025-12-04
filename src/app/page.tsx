@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Play, FolderOpen, History } from "lucide-react";
+import { Plus, Play, FolderOpen, History, BarChart3 } from "lucide-react";
 
 export default function Page() {
   return (
@@ -42,6 +42,15 @@ export default function Page() {
       >
         <History className="w-5 h-5 text-green-600" />
         <span className="text-base font-medium text-slate-800">지난 운동 기록 보기</span>
+      </Link>
+
+      {/* 대시보드 버튼 */}
+      <Link
+        href="/dashboard"
+        className="w-full mt-3 bg-gradient-to-r from-green-500 to-green-600 rounded-xl shadow-md p-4 flex items-center justify-center gap-3 hover:shadow-lg transition-shadow text-white"
+      >
+        <BarChart3 className="w-5 h-5" />
+        <span className="text-base font-medium">나의 운동 대시보드</span>
       </Link>
     </main>
   );
