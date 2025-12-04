@@ -37,7 +37,7 @@ export default function Page() {
 
       {/* 운동 기록 보기 버튼 */}
       <Link
-        href="/logs"
+        href="/history"
         className="w-full mt-3 bg-white rounded-xl shadow-md p-4 flex items-center justify-center gap-3 hover:shadow-lg transition-shadow border border-gray-100"
       >
         <History className="w-5 h-5 text-green-600" />
