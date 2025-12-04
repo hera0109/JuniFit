@@ -140,3 +140,56 @@ export async function completeWorkoutSession(sessionId: string, note?: string) {
 
   return data;
 }
+
+// 운동 기록 조회 (세션 + 세트)
+export async function getWorkoutLogs() {
+  // 완료된 세션만 조회 (ended_at이 있는 것)
+  const { data: sessions, error: sessionsError } = await supabase
+    .from('workout_sessions')
+    .select('*')
+    .not('ended_at', 'is', null)
+    .order('started_at', { ascending: false });
+
+  if (sessionsError) {
+    console.error('Error fetching workout sessions:', sessionsError);
+    return [];
+  }
+
+  // 각 세션의 세트 데이터와 프로그램 정보 조회
+  const logsWithSets = await Promise.all(
+    sessions.map(async (session) => {
+      // 세트 조회
+      const { data: sets, error: setsError } = await supabase
+        .from('workout_sets')
+        .select('*')
+        .eq('session_id', session.id)
+        .order('created_at', { ascending: true });
+
+      if (setsError) {
+        console.error('Error fetching workout sets:', setsError);
+      }
+
+      // 프로그램 제목 조회 (있는 경우)
+      let programTitle = undefined;
+      if (session.program_id) {
+        const { data: program } = await supabase
+          .from('programs')
+          .select('title')
+          .eq('id', session.program_id)
+          .single();
+        
+        if (program) {
+          programTitle = program.title;
+        }
+      }
+
+      return {
+        ...session,
+        sets: sets || [],
+        programTitle,
+      };
+    })
+  );
+
+  return logsWithSets;
+}
