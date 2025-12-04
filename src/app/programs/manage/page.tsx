@@ -2,14 +2,20 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Trash2, Edit } from "lucide-react";
+import { ArrowLeft, Trash2, Edit, ChevronDown, ChevronRight, Dumbbell } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import type { Program } from "@/types/database";
+import type { Program, ProgramExercise } from "@/types/database";
+
+type ProgramWithExercises = Program & {
+  exercises?: ProgramExercise[];
+};
 
 export default function ProgramsManagePage() {
-  const [programs, setPrograms] = useState<Program[]>([]);
+  const [programs, setPrograms] = useState<ProgramWithExercises[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [expandedProgram, setExpandedProgram] = useState<string | null>(null);
+  const [loadingExercises, setLoadingExercises] = useState<string | null>(null);
 
   useEffect(() => {
     fetchPrograms();
@@ -31,6 +37,39 @@ export default function ProgramsManagePage() {
       setPrograms(data || []);
     }
     setLoading(false);
+  }
+
+  // 프로그램 펼치기/접기 및 운동 목록 로드
+  async function toggleProgram(programId: string) {
+    if (expandedProgram === programId) {
+      setExpandedProgram(null);
+      return;
+    }
+
+    // 이미 운동 목록이 로드되어 있는지 확인
+    const program = programs.find(p => p.id === programId);
+    if (program?.exercises) {
+      setExpandedProgram(programId);
+      return;
+    }
+
+    // 운동 목록 로드
+    setLoadingExercises(programId);
+    setExpandedProgram(programId);
+
+    const { data: exercises, error } = await supabase
+      .from('program_exercises')
+      .select('*')
+      .eq('program_id', programId)
+      .order('order', { ascending: true });
+
+    if (!error && exercises) {
+      setPrograms(prev => prev.map(p => 
+        p.id === programId ? { ...p, exercises } : p
+      ));
+    }
+
+    setLoadingExercises(null);
   }
 
   async function handleDelete(program: Program) {
@@ -92,50 +131,123 @@ export default function ProgramsManagePage() {
         ) : (
           /* Programs List */
           <section className="space-y-4">
-            {programs.map((program) => (
-              <div
-                key={program.id}
-                className="bg-white rounded-xl shadow-md p-5 border border-gray-100"
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-slate-800 mb-1">
-                      {program.title}
-                    </h3>
-                    {program.description && (
-                      <p className="text-sm text-slate-600">
-                        {program.description}
-                      </p>
-                    )}
-                    <p className="text-xs text-slate-400 mt-2">
-                      생성일: {new Date(program.created_at).toLocaleDateString('ko-KR')}
-                    </p>
+            {programs.map((program) => {
+              const isExpanded = expandedProgram === program.id;
+              
+              return (
+                <div
+                  key={program.id}
+                  className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden"
+                >
+                  {/* 프로그램 헤더 */}
+                  <div 
+                    className="p-5 cursor-pointer hover:bg-gray-50 transition-colors"
+                    onClick={() => toggleProgram(program.id)}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-lg font-semibold text-slate-800">
+                            {program.title}
+                          </h3>
+                          {isExpanded ? (
+                            <ChevronDown className="w-5 h-5 text-slate-400" />
+                          ) : (
+                            <ChevronRight className="w-5 h-5 text-slate-400" />
+                          )}
+                        </div>
+                        {program.description && (
+                          <p className="text-sm text-slate-600 mt-1">
+                            {program.description}
+                          </p>
+                        )}
+                        <p className="text-xs text-slate-400 mt-2">
+                          생성일: {new Date(program.created_at).toLocaleDateString('ko-KR')}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 운동 목록 (펼침) */}
+                  {isExpanded && (
+                    <div className="border-t border-gray-100 bg-gray-50 p-4">
+                      {loadingExercises === program.id ? (
+                        <p className="text-sm text-slate-500 text-center py-4">운동 목록 로딩 중...</p>
+                      ) : program.exercises && program.exercises.length > 0 ? (
+                        <div className="space-y-3">
+                          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+                            운동 목록 ({program.exercises.length}개)
+                          </p>
+                          {program.exercises.map((exercise, index) => (
+                            <div 
+                              key={exercise.id}
+                              className="bg-white rounded-lg p-3 border border-gray-200"
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                  <span className="text-xs font-bold text-blue-700">{index + 1}</span>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-medium text-slate-800 text-sm">
+                                    {exercise.name}
+                                  </h4>
+                                  <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
+                                    <span>{exercise.target_sets}세트</span>
+                                    <span>×</span>
+                                    <span>{exercise.target_reps}회</span>
+                                    {exercise.rest_seconds && (
+                                      <>
+                                        <span className="text-slate-300">|</span>
+                                        <span>휴식 {exercise.rest_seconds}초</span>
+                                      </>
+                                    )}
+                                  </div>
+                                  {exercise.intention && (
+                                    <p className="text-xs text-blue-600 mt-1">
+                                      💡 {exercise.intention}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-4">
+                          <Dumbbell className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                          <p className="text-sm text-slate-500">등록된 운동이 없습니다</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-2 p-4 border-t border-gray-100">
+                    <Link
+                      href={`/programs/edit/${program.id}`}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
+                    >
+                      <Edit className="w-4 h-4" />
+                      <span className="font-medium">수정</span>
+                    </Link>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(program);
+                      }}
+                      disabled={deleting === program.id}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span className="font-medium">
+                        {deleting === program.id ? '삭제 중...' : '삭제'}
+                      </span>
+                    </button>
                   </div>
                 </div>
-
-                {/* Action Buttons */}
-                <div className="flex gap-2 mt-4">
-                  <Link
-                    href={`/programs/edit/${program.id}`}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
-                  >
-                    <Edit className="w-4 h-4" />
-                    <span className="font-medium">수정</span>
-                  </Link>
-
-                  <button
-                    onClick={() => handleDelete(program)}
-                    disabled={deleting === program.id}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    <span className="font-medium">
-                      {deleting === program.id ? '삭제 중...' : '삭제'}
-                    </span>
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </section>
         )}
 
