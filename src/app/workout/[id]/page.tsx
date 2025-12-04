@@ -56,7 +56,7 @@ export default function WorkoutDetailPage({ params }: Props) {
         setExpandedExercise(data.exercises[0]?.id || "");
         
         // 운동 세션 생성
-        const session = await createWorkoutSession(params.id);
+        const session = await createWorkoutSession(resolvedParams.id);
         if (session) {
           setSessionId(session.id);
         }
